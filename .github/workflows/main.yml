@@ -2,9 +2,9 @@ name: juicy-tf
 on:
   pull_request:
 jobs:
-  check-terraform:
+  check_terraform_fmt:
     name: Check Terraform Formatting
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+      - run: ${{ github.workspace }}/scripts/check-terraform-formatting.sh
