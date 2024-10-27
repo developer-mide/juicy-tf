@@ -1,0 +1,141 @@
+name: juicy-tf
+description: 'A reusable workflow for helping teams enforce best practices in their Terraform code'
+inputs:
+      validate_pr_title:
+        description: 'Skip validating the PR title'
+        default: "true"
+      validate_var_types:
+        description: 'Skip ensuring variable types are declared'
+        default: "true"
+      pr_title_pattern:
+        description: 'Pattern to match the PR title'
+        default: 'JIRA-[0-9]{1,5}'
+      main_tf_working_dir:
+        description: 'Directory to start the search from'
+        default: 'infra/'
+      check_lock_file_changes:
+        description: Check if terraform is configured for --platform=linux_amd64
+        default: "true"
+      envs:
+        description: 'List of environments to check'
+        default: '()'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+
+    - name: Validate PR Title
+      if: ${{ inputs.validate_pr_title == 'true' }}
+      run: |
+            if [[ "${{ github.event.pull_request.title }}" =~ ${{ inputs.pr_title_pattern }} ]]; then
+              echo "PR title matches pattern"
+            else
+              echo "ERROR: PR title does not match pattern"
+              exit 1
+            fi
+      shell: bash
+
+    - name: Check Secrets
+      run: |
+          search_dir="${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
+          tf_patterns=("password=" "secret=" "key=" "cert=" "token=" "credentials=")
+
+          search_tf_file() {
+            local file="$1"
+            for pattern in "${tf_patterns[@]}"; do
+              if grep -qi "$pattern" "$file"; then
+                echo "::warning file=$file::Possible secret found in $file"
+              fi
+            done
+          }
+
+          check_sensitive_files() {
+            local file="$1"
+            if [[ "$file" =~ \.(env|tfstate|tfvars)$ ]]; then
+              echo "Sensitive file found: $file"
+              exit 1
+            fi
+          }
+
+          find "$search_dir" -type f \( -name "*.tf" -o -name "*.env" -o -name "*.tfstate" -o -name "*.tfvars" \) -exec bash -c '
+            if [[ "$0" =~ \.tf$ ]]; then
+              search_tf_file "$0"
+            else
+              check_sensitive_files "$0"
+            fi
+          ' {} \;
+
+      shell: bash
+
+    - name: Check Terraform Formatting
+      run: |
+          if terraform fmt -check -recursive; then
+            echo "Terraform files are formatted correctly"
+          else
+            terraform fmt -recursive -diff -check
+            echo "ERROR: Terraform files are not formatted correctly"
+            exit 1
+          fi
+      shell: bash
+
+    - name: Validate Terraform
+      run: |
+          cd "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
+          terraform init
+          terraform validate
+      shell: bash
+
+    - name: Find Lock File
+      run: |
+          cd "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
+          if find . -name "*.lock.hcl" | read; then
+            echo "Lock file found"
+          else
+            echo "No lock file found"
+            exit 1
+          fi
+      shell: bash
+
+    - name: Variable Type Declaration
+      if: ${{ inputs.validate_var_types == 'true' }}
+      run: |
+            cd "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
+            files_without_type=()
+
+            for file in *.tf; do
+              if ! grep -q 'type = string' "$file"; then
+                files_without_type+=("$file")
+              fi
+            done
+
+            if [ ${#files_without_type[@]} -eq 0 ]; then
+              echo "All .tf files have the type declaration."
+            else
+              echo "The following .tf files do not have the type declaration:"
+              printf '%s\n' "${files_without_type[@]}"
+            fi
+      shell: bash
+
+    - name: Check Remote Backend
+      run: |
+          envs=${{ inputs.envs }}
+          for env in "${envs[@]}"; do
+          if grep -q "backend \"remote\"" "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}/$env/main.tf"; then
+              echo "Remote backend is configured in $env."
+          else
+              echo "::warning file=$env/main.tf::Remote backend is not configured."
+          fi
+          done
+      shell: bash
+
+    -  name: Check terraform lock file updates
+       if: ${{inputs.check_lock_file_changes == 'true'}}
+       run: |
+          echo "Checking for lock file changes"
+          echo "If this fails, terraform is not configured for --platform=linux_amd64"
+          echo "Try running 'terraform init --platform=linux_amd64 --platform=darwin_amd64'"
+          git diff --exit-code -- '**/.terraform.lock.hcl'
+       shell: bash
