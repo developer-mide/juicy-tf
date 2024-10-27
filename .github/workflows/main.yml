@@ -1,11 +1,27 @@
 name: juicy-tf
 on:
-  pull_request:
-env:
-  main_tf_working_dir: 'infra/'
-  skip_validate_pr_title: false
-  skip_variable_type_declaration: false
-  pr_title_pattern: JIRA-[0-9]{1,5}
+  workflow_call:
+    inputs:
+      skip_validate_pr_title:
+        description: 'Skip validating the PR title'
+        required: false
+        type: boolean
+        default: false
+      skip_variable_type_declaration:
+        description: 'Skip ensuring variable types are declared'
+        required: false
+        type: boolean
+        default: false
+      pr_title_pattern:
+        description: 'Pattern to match the PR title'
+        required: false
+        type: string
+        default: 'JIRA-[0-9]{1,5}'
+      main_tf_working_dir:
+        description: 'Directory to start the search from'
+        required: false
+        type: string
+        default: 'infra/'
 jobs:
   # Validate the PR title
   validate_pr_title:
@@ -14,8 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          if [[ ${{env.skip_validate_pr_title}} ]]; then
-            if [[ echo "${{ github.event.pull_request.title }}" | grep -E "${{ env.pr_title_pattern }}" ]]; then
+          if [[ ${{ inputs.skip_validate_pr_title }} ]]; then
+            if [[ echo "${{ github.event.pull_request.title }}" | grep -E "${{ inputs.pr_title_pattern }}" ]]; then
             echo "PR title matches pattern"
             else
                 echo "ERROR: PR title does not match pattern"
@@ -30,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: ${{ github.workspace }}/scripts/check-secrets.sh ${{env.main_tf_working_dir}}
+      - run: ${{ github.workspace }}/scripts/check-secrets.sh ${{ inputs.main_tf_working_dir}}
 
   # Check for terraform formatting issues
   check_terraform_fmt:
@@ -47,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-      - run: cd ${{ github.workspace }}/${{env.main_tf_working_dir}} && terraform validate
+      - run: cd ${{ github.workspace }}/${{ inputs.main_tf_working_dir }} && terraform init && terraform validate
 
   # Check for terraform lock file
   find_lock_file:
@@ -56,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          cd ${{ github.workspace }}/${{env.main_tf_working_dir}}
+          cd ${{ github.workspace }}/${{ inputs.main_tf_working_dir }}
           if [[ find . -name "*.lock.hcl" ]]; then
             echo "Lock file found"
           else
@@ -71,10 +87,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          if [[ ${{ env.skip_variable_type_declaration }} ]]; then
+          if [[ ${{ inputs.skip_variable_type_declaration }} ]]; then
               echo "Skipping variable type declaration check"
           else
-              cd ${{ github.workspace }}/${{env.main_tf_working_dir}}
+              cd ${{ github.workspace }}/${{ inputs.main_tf_working_dir }}
               ${{ github.workspace }}/scripts/ensure-variable-types.sh
           fi
 
