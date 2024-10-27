@@ -1,10 +1,94 @@
 name: juicy-tf
 on:
   pull_request:
+env:
+  main_tf_working_dir: 'infra/'
+  skip_validate_pr_title: false
+  skip_variable_type_declaration: false
+  pr_title_pattern: JIRA-[0-9]{1,5}
 jobs:
+  # Validate the PR title
+  validate_pr_title:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [[ ${{env.skip_validate_pr_title}} ]]; then
+            if [[ echo "${{ github.event.pull_request.title }}" | grep -E "${{ env.pr_title_pattern }}" ]]; then
+            echo "PR title matches pattern"
+            else
+                echo "ERROR: PR title does not match pattern"
+                exit 1
+            fi
+          else
+            echo "Skipping PR title validation"
+          fi
+  # Check for secrets in the terraform files
+  check_secrets:
+    name: Check Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ${{ github.workspace }}/scripts/check-secrets.sh ${{env.main_tf_working_dir}}
+
+  # Check for terraform formatting issues
   check_terraform_fmt:
     name: Check Terraform Formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: ${{ github.workspace }}/scripts/check-terraform-formatting.sh
+
+  # Validate the terraform files
+  validate_terraform:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: cd ${{ github.workspace }}/${{env.main_tf_working_dir}} && terraform validate
+
+  # Check for terraform lock file
+  find_lock_file:
+    name: Find Lock File
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cd ${{ github.workspace }}/${{env.main_tf_working_dir}}
+          if [[ find . -name "*.lock.hcl" ]]; then
+            echo "Lock file found"
+          else
+            echo "No lock file found"
+            exit 1
+          fi
+
+  # Ensure variable types are declared
+  variable_type_declaration:
+    name: Variable Type Declaration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [[ ${{ env.skip_variable_type_declaration }} ]]; then
+              echo "Skipping variable type declaration check"
+          else
+              cd ${{ github.workspace }}/${{env.main_tf_working_dir}}
+              ${{ github.workspace }}/scripts/ensure-variable-types.sh
+          fi
+
+  # Ensure remote backend is configured
+  ensure_remote_backend:
+    name: Check Remote Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: |
+          if grep -q "backend \"remote\"" main.tf; then
+            echo "Remote backend is configured."
+          else
+            echo "Error: Remote backend is not configured."
+            exit 1
+          fi
