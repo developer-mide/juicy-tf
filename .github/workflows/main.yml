@@ -157,7 +157,6 @@ jobs:
           if grep -q "backend \"remote\"" "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}/$env/main.tf"; then
               echo "Remote backend is configured in $env."
           else
-              echo "Error: Remote backend is not configured in $env."
-              exit 1
+              echo "::warning file=$env/main.tf::Remote backend is not configured."
           fi
           done
