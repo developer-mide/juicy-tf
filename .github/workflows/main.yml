@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          if [[ ${{ inputs.skip_validate_pr_title }} ]]; then
+          if [[ ${{ inputs.skip_validate_pr_title }} == false ]]; then
             if [[ echo "${{ github.event.pull_request.title }}" | grep -E "${{ inputs.pr_title_pattern }}" ]]; then
             echo "PR title matches pattern"
             else
@@ -46,7 +46,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: ${{ github.workspace }}/scripts/check-secrets.sh ${{ inputs.main_tf_working_dir}}
+      - run: |
+            # Directory to start the search from
+            search_dir="${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
+
+            # Patterns to search for in .tf files
+            tf_patterns=("password=" "secret=" "key=" "cert=" "token=" "credentials=")
+
+            # Function to search for patterns in a .tf file
+            search_tf_file() {
+                local file="$1"
+                for pattern in "${tf_patterns[@]}"; do
+                    if grep -qi "$pattern" "$file"; then
+                        echo "::warning file=$file::Possible secret found in $file"
+                    fi
+                done
+            }
+
+            # Function to check for the existence of sensitive files
+            check_sensitive_files() {
+                local file="$1"
+                if [[ "$file" =~ \.(env|tfstate|tfvars)$ ]]; then
+                    echo "Sensitive file found: $file"
+                    exit 1
+                fi
+            }
+
+            # Recursively search for .tf, .env, .tfstate, and .tfvars files and check them
+            find "$search_dir" -type f \( -name "*.tf" -o -name "*.env" -o -name "*.tfstate" -o -name "*.tfvars" \) -exec bash -c '
+                if [[ "$0" =~ \.tf$ ]]; then
+                    search_tf_file "$0"
+                else
+                    check_sensitive_files "$0"
+                fi
+            ' {} \;
 
   # Check for terraform formatting issues
   check_terraform_fmt:
@@ -54,7 +87,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: ${{ github.workspace }}/scripts/check-terraform-formatting.sh
+      - run: |
+           # Check if the terraform files are formatted correctly
+            terraform fmt -check -recursive
+
+            # Check if the terraform files are formatted correctly
+            terraform fmt -check -recursive
+            if [ $? -eq 0 ]; then
+                echo "Terraform files are formatted correctly"
+            else
+
+                # Print the terraform files that are not formatted correctly
+                terraform fmt -recursive -diff -check
+
+                echo "ERROR: Terraform files are not formatted correctly"
+                
+                # Exit with a non-zero status code
+                exit 1
+            fi
 
   # Validate the terraform files
   validate_terraform:
@@ -87,11 +137,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          if [[ ${{ inputs.skip_variable_type_declaration }} ]]; then
+          if [[ ${{ inputs.skip_variable_type_declaration }} == true ]]; then
               echo "Skipping variable type declaration check"
           else
               cd ${{ github.workspace }}/${{ inputs.main_tf_working_dir }}
-              ${{ github.workspace }}/scripts/ensure-variable-types.sh
+              # Array to store files without the type declaration
+              files_without_type=()
+
+              # Loop through all .tf files in the current directory
+              for file in *.tf; do
+                  # Check if the file contains the type declaration
+                  if ! grep -q 'type = string' "$file"; then
+                      # If not, add the file to the array
+                      files_without_type+=("$file")
+                  fi
+              done
+
+              # Check if there are any files without the type declaration
+              if [ ${#files_without_type[@]} -eq 0 ]; then
+                  echo "All .tf files have the type declaration."
+              else
+                  echo "The following .tf files do not have the type declaration:"
+                  printf '%s\n' "${files_without_type[@]}"
+              fi
           fi
 
   # Ensure remote backend is configured
