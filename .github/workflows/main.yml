@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: 'infra/'
+      envs:
+        description: 'List of environments to check'
+        required: false
+        type: string
+        default: '()'
 
 jobs:
   validate_pr_title:
@@ -147,9 +152,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
       - run: |
-          if grep -q "backend \"remote\"" main.tf; then
-            echo "Remote backend is configured."
+          envs={{ inputs.envs }}
+          for env in "${envs[@]}"; do
+          if grep -q "backend \"remote\"" "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}/$env/main.tf"; then
+              echo "Remote backend is configured in $env."
           else
-            echo "Error: Remote backend is not configured."
-            exit 1
+              echo "Error: Remote backend is not configured in $env."
+              exit 1
           fi
+          done
