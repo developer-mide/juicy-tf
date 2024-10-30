@@ -1,57 +1,45 @@
 name: juicy-tf
-on:
-  workflow_call:
-    inputs:
-      skip_validate_pr_title:
+description: 'A reusable workflow for helping teams enforce best practices in their Terraform code'
+inputs:
+      validate_pr_title:
         description: 'Skip validating the PR title'
-        required: false
-        type: boolean
-        default: false
-      skip_variable_type_declaration:
+        default: "true"
+      validate_var_types:
         description: 'Skip ensuring variable types are declared'
-        required: false
-        type: boolean
-        default: false
+        default: "true"
       pr_title_pattern:
         description: 'Pattern to match the PR title'
-        required: false
-        type: string
         default: 'JIRA-[0-9]{1,5}'
       main_tf_working_dir:
         description: 'Directory to start the search from'
-        required: false
-        type: string
         default: 'infra/'
+      check_lock_file_changes:
+        description: Check if terraform is configured for --platform=linux_amd64
+        default: "true"
       envs:
         description: 'List of environments to check'
-        required: false
-        type: string
         default: '()'
 
-jobs:
-  validate_pr_title:
-    name: Validate PR Title
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          if [[ ${{ inputs.skip_validate_pr_title }} == false ]]; then
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+
+    - name: Validate PR Title
+      if: ${{ inputs.validate_pr_title == 'true' }}
+      run: |
             if [[ "${{ github.event.pull_request.title }}" =~ ${{ inputs.pr_title_pattern }} ]]; then
               echo "PR title matches pattern"
             else
               echo "ERROR: PR title does not match pattern"
               exit 1
             fi
-          else
-            echo "Skipping PR title validation"
-          fi
+      shell: bash
 
-  check_secrets:
-    name: Check Secrets
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
+    - name: Check Secrets
+      run: |
           search_dir="${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
           tf_patterns=("password=" "secret=" "key=" "cert=" "token=" "credentials=")
 
@@ -80,12 +68,10 @@ jobs:
             fi
           ' {} \;
 
-  check_terraform_fmt:
-    name: Check Terraform Formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
+      shell: bash
+
+    - name: Check Terraform Formatting
+      run: |
           if terraform fmt -check -recursive; then
             echo "Terraform files are formatted correctly"
           else
@@ -93,24 +79,17 @@ jobs:
             echo "ERROR: Terraform files are not formatted correctly"
             exit 1
           fi
+      shell: bash
 
-  validate_terraform:
-    name: Validate Terraform
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-      - run: |
+    - name: Validate Terraform
+      run: |
           cd "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
           terraform init
           terraform validate
+      shell: bash
 
-  find_lock_file:
-    name: Find Lock File
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
+    - name: Find Lock File
+      run: |
           cd "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
           if find . -name "*.lock.hcl" | read; then
             echo "Lock file found"
@@ -118,16 +97,11 @@ jobs:
             echo "No lock file found"
             exit 1
           fi
+      shell: bash
 
-  variable_type_declaration:
-    name: Variable Type Declaration
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          if [[ ${{ inputs.skip_variable_type_declaration }} == true ]]; then
-            echo "Skipping variable type declaration check"
-          else
+    - name: Variable Type Declaration
+      if: ${{ inputs.validate_var_types == 'true' }}
+      run: |
             cd "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}"
             files_without_type=()
 
@@ -143,15 +117,10 @@ jobs:
               echo "The following .tf files do not have the type declaration:"
               printf '%s\n' "${files_without_type[@]}"
             fi
-          fi
+      shell: bash
 
-  ensure_remote_backend:
-    name: Check Remote Backend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-      - run: |
+    - name: Check Remote Backend
+      run: |
           envs=${{ inputs.envs }}
           for env in "${envs[@]}"; do
           if grep -q "backend \"remote\"" "${{ github.workspace }}/${{ inputs.main_tf_working_dir }}/$env/main.tf"; then
@@ -160,3 +129,13 @@ jobs:
               echo "::warning file=$env/main.tf::Remote backend is not configured."
           fi
           done
+      shell: bash
+
+    -  name: Check terraform lock file updates
+       if: ${{inputs.check_lock_file_changes == 'true'}}
+       run: |
+          echo "Checking for lock file changes"
+          echo "If this fails, terraform is not configured for --platform=linux_amd64"
+          echo "Try running 'terraform init --platform=linux_amd64 --platform=darwin_amd64'"
+          git diff --exit-code -- '**/.terraform.lock.hcl'
+       shell: bash
